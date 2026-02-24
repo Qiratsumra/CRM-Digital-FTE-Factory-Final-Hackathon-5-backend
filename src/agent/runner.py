@@ -282,7 +282,12 @@ Response:
                     logger.info(f"To enable, set WHATSAPP_MCP_ENABLED=true in .env")
                     
             elif customer_email:
-                logger.info(f"Sending response via {ticket_channel} for ticket {ticket_id}")
+                # Only send email for 'email' channel, not for 'web_form'
+                # Web form users see response on the website, no email needed
+                if ticket_channel == "web_form":
+                    logger.info(f"Web form ticket {ticket_id} - response stored in DB only (no email)")
+                else:
+                    logger.info(f"Sending response via {ticket_channel} for ticket {ticket_id}")
 
                 # Get the first incoming message as subject (truncated)
                 message_row = await conn.fetchrow(
@@ -322,8 +327,9 @@ Response:
                             in_reply_to=message_id_header,
                             to_email=customer_email,
                         )
-                    else:
-                        # Web form: use SMTP sender
+                    elif ticket_channel != "web_form":
+                        # Web form: skip email sending (user sees response on website)
+                        # Only send email for non-email, non-webform channels
                         email_sender = get_email_sender()
                         email_sent = await email_sender.send_ticket_response(
                             to_email=customer_email,
