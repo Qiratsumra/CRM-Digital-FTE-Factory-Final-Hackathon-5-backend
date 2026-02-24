@@ -304,12 +304,16 @@ class GmailHandler:
                     response=content,
                 )
 
-            # Create MIME message
+            # Create MIME message with proper headers
             message = MIMEMultipart("alternative")
             message["to"] = to_email
-            message["subject"] = f"Re: Support Request"
-            message["In-Reply-To"] = in_reply_to
-            message["References"] = in_reply_to
+            message["from"] = settings.gmail_sender_email
+            message["subject"] = f"Re: Support Request - Ticket Reference"
+
+            # Add In-Reply-To header (but don't require it to exist)
+            if in_reply_to:
+                message["In-Reply-To"] = in_reply_to
+                message["References"] = in_reply_to
 
             # Add plain text and HTML versions
             message.attach(MIMEText(content, "plain", "utf-8"))
@@ -318,10 +322,10 @@ class GmailHandler:
             # Encode message
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
 
-            # Send via Gmail API
+            # Send via Gmail API - don't specify threadId for new emails
             result = service.users().messages().send(
                 userId="me",
-                body={"raw": raw_message, "threadId": thread_id}
+                body={"raw": raw_message}  # Don't include threadId for new conversations
             ).execute()
 
             logger.info(f"Gmail reply sent successfully. Message ID: {result['id']}")
