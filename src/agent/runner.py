@@ -239,7 +239,7 @@ Response:
             await conn.execute(
                 """
                 INSERT INTO messages (conversation_id, channel, direction, role, content, delivery_status)
-                VALUES ($1, $2, 'outgoing', 'agent', $3, 'sent')
+                VALUES ($1, $2, 'outgoing', 'agent', $3, 'pending')
                 """,
                 conversation_id, ticket_channel, formatted,
             )
@@ -267,7 +267,17 @@ Response:
                         if initialized:
                             success = await whatsapp_handler.send_response(ticket_id, content, customer_phone)
                             logger.info(f"WhatsApp MCP response sent: {success} to {customer_phone}")
-                            if not success:
+                            if success:
+                                # Update delivery status
+                                await conn.execute(
+                                    """
+                                    UPDATE messages SET delivery_status = 'sent'
+                                    WHERE conversation_id = $1 AND direction = 'outgoing'
+                                    ORDER BY created_at DESC LIMIT 1
+                                    """,
+                                    conversation_id,
+                                )
+                            else:
                                 logger.warning(f"WhatsApp MCP send_response returned False - check bridge status")
                         else:
                             logger.warning(f"WhatsApp MCP not initialized, message stored in DB only")
@@ -277,13 +287,21 @@ Response:
                         await producer.stop()
                     except Exception as e:
                         logger.error(f"Failed to send WhatsApp response: {e}", exc_info=True)
+                        await conn.execute(
+                            """
+                            UPDATE messages SET delivery_status = 'failed'
+                            WHERE conversation_id = $1 AND direction = 'outgoing'
+                            ORDER BY created_at DESC LIMIT 1
+                            """,
+                            conversation_id,
+                        )
                 else:
                     logger.info(f"WhatsApp MCP disabled in settings, message stored in DB only")
                     logger.info(f"To enable, set WHATSAPP_MCP_ENABLED=true in .env")
-                    
+
             elif customer_email:
                 # Send email for ALL channels including web_form
-                logger.info(f"Sending response via {ticket_channel} for ticket {ticket_id}")
+                logger.info(f"📧 Sending email response for ticket {ticket_id} to {customer_email}")
 
                 # Get the first incoming message as subject (truncated)
                 message_row = await conn.fetchrow(
@@ -297,29 +315,77 @@ Response:
                 )
                 subject = message_row["content"][:50] + "..." if message_row else "Support Request"
 
+                email_sent = False
+
+                # Try SMTP first (more reliable for Render deployment)
                 try:
-                    # Send via Gmail API for all channels
-                    producer = FTEKafkaProducer()
-                    gmail_handler = GmailHandler(producer)
-                    
-                    message_id_header = str(ticket_id)
-                    
-                    email_sent = await gmail_handler.send_reply(
-                        thread_id=conversation_id,
-                        content=content,
-                        in_reply_to=message_id_header,
+                    logger.info(f"Attempting SMTP send to {customer_email}")
+                    email_sender = get_email_sender()
+                    email_sent = await email_sender.send_ticket_response(
                         to_email=customer_email,
+                        ticket_id=ticket_id,
+                        subject=subject,
+                        response=formatted,
+                        customer_name=customer_name,
                     )
 
                     if email_sent:
-                        logger.info(f"✅ Response sent successfully via Gmail API to {customer_email}")
+                        logger.info(f"✅ Email sent successfully via SMTP to {customer_email}")
+                        # Update delivery status
+                        await conn.execute(
+                            """
+                            UPDATE messages SET delivery_status = 'sent'
+                            WHERE conversation_id = $1 AND direction = 'outgoing'
+                            ORDER BY created_at DESC LIMIT 1
+                            """,
+                            conversation_id,
+                        )
                     else:
-                        logger.warning(f"⚠️ Gmail API send returned False for {ticket_channel}")
+                        logger.warning(f"⚠️ SMTP send returned False - credentials may be missing")
 
-                except Exception as email_error:
-                    logger.error(f"❌ Response sending failed: {email_error}", exc_info=True)
-                    # Don't fail the whole operation - ticket is still resolved in DB
-                    email_sent = False
+                except Exception as smtp_error:
+                    logger.error(f"❌ SMTP sending failed: {smtp_error}", exc_info=True)
+
+                    # Try Gmail API as fallback
+                    try:
+                        logger.info(f"Attempting Gmail API fallback for {customer_email}")
+                        producer = FTEKafkaProducer()
+                        gmail_handler = GmailHandler(producer)
+
+                        email_sent = await gmail_handler.send_reply(
+                            thread_id=conversation_id,
+                            content=formatted,
+                            in_reply_to=str(ticket_id),
+                            to_email=customer_email,
+                        )
+
+                        if email_sent:
+                            logger.info(f"✅ Email sent successfully via Gmail API to {customer_email}")
+                            await conn.execute(
+                                """
+                                UPDATE messages SET delivery_status = 'sent'
+                                WHERE conversation_id = $1 AND direction = 'outgoing'
+                                ORDER BY created_at DESC LIMIT 1
+                                """,
+                                conversation_id,
+                            )
+                        else:
+                            logger.warning(f"⚠️ Gmail API also failed")
+
+                    except Exception as gmail_error:
+                        logger.error(f"❌ Gmail API fallback also failed: {gmail_error}", exc_info=True)
+
+                # Mark as failed if both methods failed
+                if not email_sent:
+                    await conn.execute(
+                        """
+                        UPDATE messages SET delivery_status = 'failed'
+                        WHERE conversation_id = $1 AND direction = 'outgoing'
+                        ORDER BY created_at DESC LIMIT 1
+                        """,
+                        conversation_id,
+                    )
+                    logger.error(f"❌ All email sending methods failed for {customer_email}")
 
     async def _escalate_ticket(self, ticket_id: str, reason: str) -> None:
         """Escalate ticket to human support."""
