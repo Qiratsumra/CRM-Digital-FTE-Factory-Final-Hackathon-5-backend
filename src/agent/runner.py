@@ -200,7 +200,7 @@ Response:
     async def _send_response(self, ticket_id: str, content: str, channel: str) -> None:
         """Store response in database and send email for web form and email tickets."""
         from src.agent.formatters import format_for_channel
-        from src.channels.email_sender import get_email_sender
+        from src.channels.sendgrid_sender import get_sendgrid_sender
         from src.channels.gmail_handler import GmailHandler
         from src.channels.whatsapp_handler import WhatsAppHandler
         from src.database.connection import get_pool
@@ -323,10 +323,10 @@ Response:
 
                 email_sent = False
 
-                # Try SMTP first (more reliable for Render deployment)
+                # Try SendGrid first (works on Render - uses HTTPS not SMTP)
                 try:
-                    logger.info(f"Attempting SMTP send to {customer_email}")
-                    email_sender = get_email_sender()
+                    logger.info(f"Attempting SendGrid send to {customer_email}")
+                    email_sender = get_sendgrid_sender()
                     email_sent = await email_sender.send_ticket_response(
                         to_email=customer_email,
                         ticket_id=ticket_id,
@@ -336,7 +336,7 @@ Response:
                     )
 
                     if email_sent:
-                        logger.info(f"✅ Email sent successfully via SMTP to {customer_email}")
+                        logger.info(f"✅ Email sent successfully via SendGrid to {customer_email}")
                         # Update delivery status
                         await conn.execute(
                             """
@@ -350,10 +350,10 @@ Response:
                             conversation_id,
                         )
                     else:
-                        logger.warning(f"⚠️ SMTP send returned False - credentials may be missing")
+                        logger.warning(f"⚠️ SendGrid send returned False - API key may be missing")
 
-                except Exception as smtp_error:
-                    logger.error(f"❌ SMTP sending failed: {smtp_error}", exc_info=True)
+                except Exception as sendgrid_error:
+                    logger.error(f"❌ SendGrid sending failed: {sendgrid_error}", exc_info=True)
 
                     # Try Gmail API as fallback
                     try:

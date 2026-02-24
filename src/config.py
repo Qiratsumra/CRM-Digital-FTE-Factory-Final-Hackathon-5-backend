@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # Sentry (error monitoring)
     sentry_dsn: str = ""  # Optional: Set to your Sentry DSN for error tracking
 
+    # SendGrid (email sending via API - works on Render)
+    sendgrid_api_key: str = ""
+    sendgrid_from_email: str = "sheikhqirat100@gmail.com"
+
 
 @lru_cache
 def get_settings() -> Settings:
