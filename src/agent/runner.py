@@ -282,71 +282,44 @@ Response:
                     logger.info(f"To enable, set WHATSAPP_MCP_ENABLED=true in .env")
                     
             elif customer_email:
-                # Only send email for 'email' channel, not for 'web_form'
-                # Web form users see response on the website, no email needed
-                if ticket_channel == "web_form":
-                    logger.info(f"Web form ticket {ticket_id} - response stored in DB only (no email)")
-                    email_sent = True  # Skip email, consider it success
-                else:
-                    logger.info(f"Sending response via {ticket_channel} for ticket {ticket_id}")
+                # Send email for all channels including web_form
+                logger.info(f"Sending response via {ticket_channel} for ticket {ticket_id}")
 
-                    # Get the first incoming message as subject (truncated)
-                    message_row = await conn.fetchrow(
-                        """
-                        SELECT content FROM messages
-                        WHERE conversation_id = $1 AND direction = 'incoming'
-                        ORDER BY created_at ASC
-                        LIMIT 1
-                        """,
-                        conversation_id,
+                # Get the first incoming message as subject (truncated)
+                message_row = await conn.fetchrow(
+                    """
+                    SELECT content FROM messages
+                    WHERE conversation_id = $1 AND direction = 'incoming'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    conversation_id,
+                )
+                subject = message_row["content"][:50] + "..." if message_row else "Support Request"
+
+                try:
+                    # Send via Gmail API for all channels (works on Render)
+                    producer = FTEKafkaProducer()
+                    gmail_handler = GmailHandler(producer)
+                    
+                    # Use ticket_id as message reference
+                    message_id_header = str(ticket_id)
+                    
+                    email_sent = await gmail_handler.send_reply(
+                        thread_id=conversation_id,
+                        content=content,
+                        in_reply_to=message_id_header,
+                        to_email=customer_email,
                     )
-                    subject = message_row["content"][:50] + "..." if message_row else "Support Request"
 
-                    try:
-                        # Send via appropriate channel
-                        if ticket_channel == "email":
-                            # Get thread_id from the original email
-                            email_thread_row = await conn.fetchrow(
-                                """
-                                SELECT content FROM messages
-                                WHERE conversation_id = $1 AND direction = 'incoming' AND channel = 'email'
-                                ORDER BY created_at ASC
-                                LIMIT 1
-                                """,
-                                conversation_id,
-                            )
+                    if email_sent:
+                        logger.info(f"✅ Response sent successfully via Gmail API to {customer_email}")
+                    else:
+                        logger.warning(f"⚠️ Gmail API send returned False for {ticket_channel}")
 
-                            # Use Gmail handler to send reply
-                            producer = FTEKafkaProducer()
-                            gmail_handler = GmailHandler(producer)
-
-                            # Get message_id from the original email (stored in metadata or use conversation_id)
-                            message_id_header = str(ticket_id)  # Using ticket_id as reference
-                            email_sent = await gmail_handler.send_reply(
-                                thread_id=conversation_id,
-                                content=content,
-                                in_reply_to=message_id_header,
-                                to_email=customer_email,
-                            )
-                        else:
-                            # Other channels: use SMTP sender
-                            email_sender = get_email_sender()
-                            email_sent = await email_sender.send_ticket_response(
-                                to_email=customer_email,
-                                ticket_id=ticket_id,
-                                subject=subject,
-                                response=content,
-                                customer_name=customer_name,
-                            )
-
-                        if email_sent:
-                            logger.info(f"✅ Response sent successfully via {ticket_channel}")
-                        else:
-                            logger.warning(f"⚠️ Response sending returned False for {ticket_channel}")
-
-                    except Exception as email_error:
-                        logger.error(f"❌ Response sending failed: {email_error}", exc_info=True)
-                        # Don't fail the whole operation - ticket is still resolved in DB
+                except Exception as email_error:
+                    logger.error(f"❌ Response sending failed: {email_error}", exc_info=True)
+                    # Don't fail the whole operation - ticket is still resolved in DB
 
     async def _escalate_ticket(self, ticket_id: str, reason: str) -> None:
         """Escalate ticket to human support."""

@@ -36,14 +36,25 @@ class GmailHandler:
             from googleapiclient.discovery import build
 
             # Try service account authentication first (for production)
-            creds_file = Path("credentials.json")
+            creds_file = Path(settings.gmail_credentials_path)
             if creds_file.exists():
                 credentials = service_account.Credentials.from_service_account_file(
                     str(creds_file),
-                    scopes=["https://www.googleapis.com/auth/gmail.modify"]
+                    scopes=["https://www.googleapis.com/auth/gmail.send"]
                 )
                 self._service = build("gmail", "v1", credentials=credentials)
-                logger.info("Gmail service authenticated via service account")
+                logger.info(f"Gmail service authenticated via service account: {creds_file}")
+                return self._service
+
+            # Try absolute path for Render
+            render_creds_path = Path("/opt/render/project/src/credentials.json")
+            if render_creds_path.exists():
+                credentials = service_account.Credentials.from_service_account_file(
+                    str(render_creds_path),
+                    scopes=["https://www.googleapis.com/auth/gmail.send"]
+                )
+                self._service = build("gmail", "v1", credentials=credentials)
+                logger.info(f"Gmail service authenticated via Render path: {render_creds_path}")
                 return self._service
 
             # Fallback to API key + SMTP for sending (development)
