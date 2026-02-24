@@ -34,8 +34,26 @@ class GmailHandler:
         try:
             from google.oauth2 import service_account
             from googleapiclient.discovery import build
+            import json
+            import os
 
-            # Try service account authentication first (for production)
+            # Try from environment variable first (for Render)
+            creds_json = os.getenv("GMAIL_CREDENTIALS_FILE")
+            if creds_json:
+                try:
+                    credentials = service_account.Credentials.from_service_account_info(
+                        json.loads(creds_json),
+                        scopes=["https://www.googleapis.com/auth/gmail.send"]
+                    )
+                    self._service = build("gmail", "v1", credentials=credentials)
+                    logger.info("Gmail service authenticated via environment variable")
+                    return self._service
+                except json.JSONDecodeError as je:
+                    logger.error(f"Failed to parse GMAIL_CREDENTIALS_FILE JSON: {je}")
+                except Exception as e:
+                    logger.error(f"Failed to load credentials from env: {e}")
+
+            # Try service account file (for local development)
             creds_file = Path(settings.gmail_credentials_path)
             if creds_file.exists():
                 credentials = service_account.Credentials.from_service_account_file(
@@ -43,10 +61,10 @@ class GmailHandler:
                     scopes=["https://www.googleapis.com/auth/gmail.send"]
                 )
                 self._service = build("gmail", "v1", credentials=credentials)
-                logger.info(f"Gmail service authenticated via service account: {creds_file}")
+                logger.info(f"Gmail service authenticated via service account file: {creds_file}")
                 return self._service
 
-            # Try absolute path for Render
+            # Try absolute path for Render (if file uploaded)
             render_creds_path = Path("/opt/render/project/src/credentials.json")
             if render_creds_path.exists():
                 credentials = service_account.Credentials.from_service_account_file(
@@ -54,12 +72,11 @@ class GmailHandler:
                     scopes=["https://www.googleapis.com/auth/gmail.send"]
                 )
                 self._service = build("gmail", "v1", credentials=credentials)
-                logger.info(f"Gmail service authenticated via Render path: {render_creds_path}")
+                logger.info(f"Gmail service authenticated via Render file path: {render_creds_path}")
                 return self._service
 
-            # Fallback to API key + SMTP for sending (development)
-            # For receiving, we'll use polling with IMAP
-            logger.warning("No Gmail credentials.json found. Using limited mode.")
+            # Fallback
+            logger.warning("No Gmail credentials found. Using limited mode.")
             return None
 
         except Exception as e:
