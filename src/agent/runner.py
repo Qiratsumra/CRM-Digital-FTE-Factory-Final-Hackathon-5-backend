@@ -272,8 +272,11 @@ Response:
                                 await conn.execute(
                                     """
                                     UPDATE messages SET delivery_status = 'sent'
-                                    WHERE conversation_id = $1 AND direction = 'outgoing'
-                                    ORDER BY created_at DESC LIMIT 1
+                                    WHERE id = (
+                                        SELECT id FROM messages
+                                        WHERE conversation_id = $1 AND direction = 'outgoing'
+                                        ORDER BY created_at DESC LIMIT 1
+                                    )
                                     """,
                                     conversation_id,
                                 )
@@ -290,8 +293,11 @@ Response:
                         await conn.execute(
                             """
                             UPDATE messages SET delivery_status = 'failed'
-                            WHERE conversation_id = $1 AND direction = 'outgoing'
-                            ORDER BY created_at DESC LIMIT 1
+                            WHERE id = (
+                                SELECT id FROM messages
+                                WHERE conversation_id = $1 AND direction = 'outgoing'
+                                ORDER BY created_at DESC LIMIT 1
+                            )
                             """,
                             conversation_id,
                         )
@@ -335,8 +341,11 @@ Response:
                         await conn.execute(
                             """
                             UPDATE messages SET delivery_status = 'sent'
-                            WHERE conversation_id = $1 AND direction = 'outgoing'
-                            ORDER BY created_at DESC LIMIT 1
+                            WHERE id = (
+                                SELECT id FROM messages
+                                WHERE conversation_id = $1 AND direction = 'outgoing'
+                                ORDER BY created_at DESC LIMIT 1
+                            )
                             """,
                             conversation_id,
                         )
@@ -364,8 +373,11 @@ Response:
                             await conn.execute(
                                 """
                                 UPDATE messages SET delivery_status = 'sent'
-                                WHERE conversation_id = $1 AND direction = 'outgoing'
-                                ORDER BY created_at DESC LIMIT 1
+                                WHERE id = (
+                                    SELECT id FROM messages
+                                    WHERE conversation_id = $1 AND direction = 'outgoing'
+                                    ORDER BY created_at DESC LIMIT 1
+                                )
                                 """,
                                 conversation_id,
                             )
@@ -380,8 +392,11 @@ Response:
                     await conn.execute(
                         """
                         UPDATE messages SET delivery_status = 'failed'
-                        WHERE conversation_id = $1 AND direction = 'outgoing'
-                        ORDER BY created_at DESC LIMIT 1
+                        WHERE id = (
+                            SELECT id FROM messages
+                            WHERE conversation_id = $1 AND direction = 'outgoing'
+                            ORDER BY created_at DESC LIMIT 1
+                        )
                         """,
                         conversation_id,
                     )
