@@ -282,44 +282,51 @@ Response:
                     logger.info(f"To enable, set WHATSAPP_MCP_ENABLED=true in .env")
                     
             elif customer_email:
-                # Send email for all channels including web_form
-                logger.info(f"Sending response via {ticket_channel} for ticket {ticket_id}")
+                # For web_form: Just store in DB, show response on website
+                # Email sending requires Gmail API OAuth setup (done separately)
+                if ticket_channel == "web_form":
+                    logger.info(f"Web form ticket {ticket_id} - response stored in DB, shown on website")
+                    logger.info(f"To enable email delivery, configure Gmail API OAuth in Google Cloud Console")
+                    email_sent = True  # Success - user sees response on website
+                else:
+                    # For email channel: Try to send via Gmail API
+                    logger.info(f"Sending response via {ticket_channel} for ticket {ticket_id}")
 
-                # Get the first incoming message as subject (truncated)
-                message_row = await conn.fetchrow(
-                    """
-                    SELECT content FROM messages
-                    WHERE conversation_id = $1 AND direction = 'incoming'
-                    ORDER BY created_at ASC
-                    LIMIT 1
-                    """,
-                    conversation_id,
-                )
-                subject = message_row["content"][:50] + "..." if message_row else "Support Request"
-
-                try:
-                    # Send via Gmail API for all channels (works on Render)
-                    producer = FTEKafkaProducer()
-                    gmail_handler = GmailHandler(producer)
-                    
-                    # Use ticket_id as message reference
-                    message_id_header = str(ticket_id)
-                    
-                    email_sent = await gmail_handler.send_reply(
-                        thread_id=conversation_id,
-                        content=content,
-                        in_reply_to=message_id_header,
-                        to_email=customer_email,
+                    # Get the first incoming message as subject (truncated)
+                    message_row = await conn.fetchrow(
+                        """
+                        SELECT content FROM messages
+                        WHERE conversation_id = $1 AND direction = 'incoming'
+                        ORDER BY created_at ASC
+                        LIMIT 1
+                        """,
+                        conversation_id,
                     )
+                    subject = message_row["content"][:50] + "..." if message_row else "Support Request"
 
-                    if email_sent:
-                        logger.info(f"✅ Response sent successfully via Gmail API to {customer_email}")
-                    else:
-                        logger.warning(f"⚠️ Gmail API send returned False for {ticket_channel}")
+                    try:
+                        # Send via Gmail API
+                        producer = FTEKafkaProducer()
+                        gmail_handler = GmailHandler(producer)
+                        
+                        message_id_header = str(ticket_id)
+                        
+                        email_sent = await gmail_handler.send_reply(
+                            thread_id=conversation_id,
+                            content=content,
+                            in_reply_to=message_id_header,
+                            to_email=customer_email,
+                        )
 
-                except Exception as email_error:
-                    logger.error(f"❌ Response sending failed: {email_error}", exc_info=True)
-                    # Don't fail the whole operation - ticket is still resolved in DB
+                        if email_sent:
+                            logger.info(f"✅ Response sent successfully via Gmail API to {customer_email}")
+                        else:
+                            logger.warning(f"⚠️ Gmail API send returned False for {ticket_channel}")
+
+                    except Exception as email_error:
+                        logger.error(f"❌ Response sending failed: {email_error}", exc_info=True)
+                        # Don't fail the whole operation - ticket is still resolved in DB
+                        email_sent = False
 
     async def _escalate_ticket(self, ticket_id: str, reason: str) -> None:
         """Escalate ticket to human support."""
